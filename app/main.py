@@ -70,6 +70,14 @@ def run_daily_summary():
     """รันทุกวัน 18:00 — สรุปแต่ละกลุ่มแล้วส่งกลับ"""
     logger.info("Starting daily summary job...")
     groups = get_all_groups()
+
+    # Fallback: ใช้ TARGET_GROUP_ID ถ้า DB ว่าง
+    target = os.environ.get("TARGET_GROUP_ID")
+    if not groups and target:
+        logger.info(f"No groups in DB, using TARGET_GROUP_ID: {target}")
+        save_group(target)
+        groups = [target]
+
     logger.info(f"Found {len(groups)} groups to summarize")
 
     with ApiClient(configuration) as api_client:
@@ -106,6 +114,16 @@ def start_scheduler():
 @app.route("/health")
 def health():
     return {"status": "ok", "time": datetime.now(BANGKOK_TZ).isoformat()}
+
+
+@app.route("/register-group")
+def register_group():
+    group_id = request.args.get("id")
+    if not group_id:
+        return {"error": "missing ?id=GROUP_ID"}, 400
+    save_group(group_id)
+    logger.info(f"Manually registered group: {group_id}")
+    return {"status": "registered", "group_id": group_id}
 
 
 @app.route("/trigger-summary")
