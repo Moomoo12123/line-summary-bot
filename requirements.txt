@@ -1,7 +1,8 @@
 flask==3.0.3
 line-bot-sdk==3.11.0
-anthropic>=0.40.0
+anthropic==0.34.0
 apscheduler==3.10.4
 sqlalchemy==2.0.35
 pytz==2024.1
 gunicorn==22.0.0
+psycopg2-binary==2.9.9
