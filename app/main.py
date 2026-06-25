@@ -116,8 +116,10 @@ def trigger_summary():
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
 
+# Start scheduler when module loads (works with gunicorn)
+init_db()
+start_scheduler()
+
 if __name__ == "__main__":
-    init_db()
-    start_scheduler()
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
