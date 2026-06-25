@@ -9,7 +9,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
 import pytz
 
-from database import init_db, save_message, save_group, get_all_groups
+from app.database import init_db, save_message, save_group, get_all_groups
 from summarizer import generate_summary_for_group
 
 logging.basicConfig(level=logging.INFO)
