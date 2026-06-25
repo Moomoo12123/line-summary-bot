@@ -2,6 +2,6 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "python -c 'from app.database import init_db; init_db()' && gunicorn app.main:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120"
+startCommand = "python -c 'from app.database import init_db; init_db()' && gunicorn app.main:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120 --preload"
 healthcheckPath = "/health"
 restartPolicyType = "ON_FAILURE"
