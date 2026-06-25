@@ -108,6 +108,12 @@ def health():
     return {"status": "ok", "time": datetime.now(BANGKOK_TZ).isoformat()}
 
 
+@app.route("/trigger-summary")
+def trigger_summary():
+    run_daily_summary()
+    return {"status": "summary triggered", "time": datetime.now(BANGKOK_TZ).isoformat()}
+
+
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
