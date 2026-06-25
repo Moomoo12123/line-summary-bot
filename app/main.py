@@ -47,15 +47,6 @@ def handle_join(event):
     if source.type == "group":
         save_group(source.group_id)
         logger.info(f"Joined group: {source.group_id}")
-        # ส่งข้อความต้อนรับ
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.push_message(
-                PushMessageRequest(
-                    to=source.group_id,
-                    messages=[TextMessage(text="สวัสดีครับ 🤖 ผมจะช่วยสรุปบทสนทนาในกลุ่มนี้ทุกวัน เวลา 18:00 น. ครับ")]
-                )
-            )
 
 
 @handler.add(MessageEvent, message=TextMessageContent)
@@ -90,7 +81,7 @@ def run_daily_summary():
                 if summary:
                     line_bot_api.push_message(
                         PushMessageRequest(
-                            to=os.environ.get("TARGET_GROUP_ID", group_id),
+                            to=group_id,
                             messages=[TextMessage(text=summary)]
                         )
                     )
