@@ -90,7 +90,7 @@ def run_daily_summary():
                 if summary:
                     line_bot_api.push_message(
                         PushMessageRequest(
-                            to=group_id,
+                            to=os.environ.get("TARGET_GROUP_ID", group_id),
                             messages=[TextMessage(text=summary)]
                         )
                     )
