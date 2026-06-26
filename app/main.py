@@ -20,6 +20,7 @@ app = Flask(__name__)
 # LINE config
 LINE_CHANNEL_SECRET = os.environ["LINE_CHANNEL_SECRET"]
 LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
+TARGET_GROUP_ID = os.environ.get("TARGET_GROUP_ID")  # กลุ่มที่ส่งสรุปไป
 
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
@@ -68,37 +69,45 @@ def handle_message(event):
 # ─── Daily Summary Job ────────────────────────────────────────────────────────
 
 def run_daily_summary():
-    """รันทุกวัน 18:00 — สรุปแต่ละกลุ่มแล้วส่งกลับ"""
+    """รันทุกวัน 18:00 — สรุปทุกกลุ่มแล้วส่งไปที่ TARGET_GROUP_ID"""
     logger.info("Starting daily summary job...")
+
+    if not TARGET_GROUP_ID:
+        logger.error("TARGET_GROUP_ID not set! Cannot send summary.")
+        return
+
     groups = get_all_groups()
-
-    # Fallback: ใช้ TARGET_GROUP_ID ถ้า DB ว่าง
-    target = os.environ.get("TARGET_GROUP_ID")
-    if not groups and target:
-        logger.info(f"No groups in DB, using TARGET_GROUP_ID: {target}")
-        save_group(target)
-        groups = [target]
-
-    logger.info(f"Found {len(groups)} groups to summarize")
+    logger.info(f"Found {len(groups)} groups to summarize, sending to: {TARGET_GROUP_ID}")
 
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
 
+        all_summaries = []
         for group_id in groups:
             try:
                 summary = generate_summary_for_group(group_id)
                 if summary:
-                    line_bot_api.push_message(
-                        PushMessageRequest(
-                            to=group_id,
-                            messages=[TextMessage(text=summary)]
-                        )
-                    )
-                    logger.info(f"Sent summary to {group_id}")
+                    all_summaries.append(summary)
+                    logger.info(f"Generated summary for {group_id}")
                 else:
                     logger.info(f"No messages today for {group_id}, skipping")
             except Exception as e:
                 logger.error(f"Error summarizing {group_id}: {e}")
+
+        if all_summaries:
+            full_summary = "\n\n".join(all_summaries)
+            try:
+                line_bot_api.push_message(
+                    PushMessageRequest(
+                        to=TARGET_GROUP_ID,
+                        messages=[TextMessage(text=full_summary)]
+                    )
+                )
+                logger.info(f"Sent summary to TARGET_GROUP_ID: {TARGET_GROUP_ID}")
+            except Exception as e:
+                logger.error(f"Error sending to TARGET_GROUP_ID: {e}")
+        else:
+            logger.info("No summaries to send today")
 
 
 # ─── Scheduler ────────────────────────────────────────────────────────────────
@@ -110,7 +119,7 @@ def start_scheduler():
     logger.info("Scheduler started — daily summary at 18:00 Bangkok time")
 
 
-# ─── Health Check ─────────────────────────────────────────────────────────────
+# ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @app.route("/health")
 def health():
@@ -126,6 +135,7 @@ def debug_db():
     cycle_start, cycle_end = get_summary_cycle()
     db.close()
     return {
+        "target_group_id": TARGET_GROUP_ID,
         "groups": [g.group_id for g in groups],
         "recent_messages": [
             {"group_id": m.group_id, "text": m.text, "time": str(m.timestamp)}
@@ -156,7 +166,6 @@ def trigger_summary():
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
 
-# Start scheduler when module loads (works with gunicorn)
 init_db()
 start_scheduler()
 
