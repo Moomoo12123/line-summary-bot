@@ -60,6 +60,15 @@ class Message(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Migration: เพิ่ม column ใหม่ถ้ายังไม่มี
+    try:
+        with engine.connect() as conn:
+            conn.execute(__import__('sqlalchemy').text(
+                "ALTER TABLE groups ADD COLUMN IF NOT EXISTS group_name VARCHAR(200)"
+            ))
+            conn.commit()
+    except Exception as e:
+        pass  # column อาจมีอยู่แล้ว หรือ DB ไม่รองรับ IF NOT EXISTS
 
 
 def save_group(group_id: str, group_name: str = None):
