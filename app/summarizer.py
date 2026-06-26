@@ -9,6 +9,7 @@ from app.database import (
     get_messages_in_cycle,
     get_message_count_in_cycle,
     get_summary_cycle,
+    get_group_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,14 +40,6 @@ SYSTEM_PROMPT = """คุณเป็น AI ผู้ช่วยสรุปบ
   "activity_level": "low" | "medium" | "high"
 }
 
-section types:
-- key_points: ประเด็นสำคัญที่พูดถึง
-- action_items: งานหรือสิ่งที่ต้องทำ
-- decisions: การตัดสินใจที่เกิดขึ้น
-- announcements: ประกาศหรือแจ้งข่าว
-- conflicts: ความขัดแย้งที่ยังไม่ได้ข้อสรุป
-- highlights: ช่วงเวลาสำคัญหรือน่าจดจำ
-
 ถ้าบทสนทนาสั้นมากหรือไม่มีสาระ ให้ตั้ง has_content เป็น false"""
 
 
@@ -54,8 +47,7 @@ def format_messages_for_prompt(messages: list[dict]) -> str:
     return "\n".join(f"[{m['time']}] {m['user_id'][:8]}: {m['text']}" for m in messages)
 
 
-def build_summary_text(analysis: dict, cycle_start: datetime, cycle_end: datetime, msg_count: int) -> str:
-    # แสดงช่วงเวลาของรอบที่สรุป
+def build_summary_text(analysis: dict, cycle_start: datetime, cycle_end: datetime, msg_count: int, group_name: str) -> str:
     start_str = cycle_start.strftime("%d/%m %H:%M")
     end_str = cycle_end.strftime("%d/%m %H:%M")
 
@@ -64,6 +56,7 @@ def build_summary_text(analysis: dict, cycle_start: datetime, cycle_end: datetim
 
     lines = [
         f"📋 สรุปบทสนทนา",
+        f"👥 {group_name}",          # ← ชื่อกลุ่ม
         f"🕐 {start_str} → {end_str}",
         f"💬 {msg_count} ข้อความ  {activity_emoji} {mood_emoji}",
         f"📌 {analysis.get('topic', 'การสนทนาทั่วไป')}",
@@ -90,6 +83,7 @@ def generate_summary_for_group(group_id: str) -> str | None:
     if msg_count == 0:
         return None
 
+    group_name = get_group_name(group_id)
     messages = get_messages_in_cycle(group_id, cycle_start, cycle_end)
     conversation_text = format_messages_for_prompt(messages)
 
@@ -107,9 +101,9 @@ def generate_summary_for_group(group_id: str) -> str | None:
         if not analysis.get("has_content", True):
             start_str = cycle_start.strftime("%d/%m %H:%M")
             end_str = cycle_end.strftime("%d/%m %H:%M")
-            return f"📋 ไม่มีการสนทนาที่มีสาระในรอบนี้\n🕐 {start_str} → {end_str} ({msg_count} ข้อความ) 🤖"
+            return f"📋 ไม่มีการสนทนาที่มีสาระในรอบนี้\n👥 {group_name}\n🕐 {start_str} → {end_str} ({msg_count} ข้อความ) 🤖"
 
-        return build_summary_text(analysis, cycle_start, cycle_end, msg_count)
+        return build_summary_text(analysis, cycle_start, cycle_end, msg_count, group_name)
 
     except json.JSONDecodeError as e:
         logger.error(f"JSON parse error for {group_id}: {e}")

@@ -30,6 +30,18 @@ configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 BANGKOK_TZ = pytz.timezone("Asia/Bangkok")
 
 
+def fetch_group_name(group_id: str) -> str | None:
+    """ดึงชื่อกลุ่มจาก LINE API"""
+    try:
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            summary = line_bot_api.get_group_summary(group_id=group_id)
+            return summary.group_name
+    except Exception as e:
+        logger.warning(f"Cannot fetch group name for {group_id}: {e}")
+        return None
+
+
 # ─── Webhook ──────────────────────────────────────────────────────────────────
 
 @app.route("/webhook", methods=["POST"])
@@ -47,8 +59,10 @@ def webhook():
 def handle_join(event):
     source = event.source
     if source.type == "group":
-        save_group(source.group_id)
-        logger.info(f"Joined group: {source.group_id}")
+        group_id = source.group_id
+        group_name = fetch_group_name(group_id)
+        save_group(group_id, group_name)
+        logger.info(f"Joined group: {group_id} ({group_name})")
 
 
 # ─── Text ─────────────────────────────────────────────────────────────────────
@@ -62,7 +76,12 @@ def handle_text(event):
     user_id = getattr(source, "user_id", "unknown")
     text = event.message.text
     ts = datetime.fromtimestamp(event.timestamp / 1000, tz=BANGKOK_TZ)
-    logger.info(f"Text from {group_id}: {text[:30]}")
+
+    # ดึงและบันทึกชื่อกลุ่มถ้ายังไม่มี
+    group_name = fetch_group_name(group_id)
+    save_group(group_id, group_name)
+
+    logger.info(f"Text from {group_name or group_id}: {text[:30]}")
     save_message(group_id=group_id, user_id=user_id, text=text, timestamp=ts)
 
 
@@ -120,12 +139,7 @@ def handle_file(event):
         with ApiClient(configuration) as api_client:
             blob_api = MessagingApiBlob(api_client)
             file_bytes = blob_api.get_message_content(message_id=event.message.id)
-
-        if file_name.lower().endswith(".pdf"):
-            text = extract_pdf(file_bytes)
-        else:
-            text = f"[ไฟล์: {file_name}]"
-
+        text = extract_pdf(file_bytes) if file_name.lower().endswith(".pdf") else f"[ไฟล์: {file_name}]"
         logger.info(f"File from {group_id}: {file_name}")
     except Exception as e:
         logger.error(f"Error processing file: {e}")
@@ -203,7 +217,7 @@ def debug_db():
     db.close()
     return {
         "target_group_id": TARGET_GROUP_ID,
-        "groups": [g.group_id for g in groups],
+        "groups": [{"id": g.group_id, "name": g.group_name} for g in groups],
         "recent_messages": [
             {"group_id": m.group_id, "text": m.text[:50], "time": str(m.timestamp)}
             for m in messages
@@ -217,8 +231,9 @@ def register_group():
     group_id = request.args.get("id")
     if not group_id:
         return {"error": "missing ?id=GROUP_ID"}, 400
-    save_group(group_id)
-    return {"status": "registered", "group_id": group_id}
+    group_name = fetch_group_name(group_id)
+    save_group(group_id, group_name)
+    return {"status": "registered", "group_id": group_id, "group_name": group_name}
 
 
 @app.route("/trigger-summary")
