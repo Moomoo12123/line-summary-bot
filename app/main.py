@@ -3,28 +3,30 @@ import logging
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
-from linebot.v3.messaging import Configuration, ApiClient, MessagingApi, PushMessageRequest, TextMessage
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, JoinEvent
+from linebot.v3.messaging import Configuration, ApiClient, MessagingApi, MessagingApiBlob, PushMessageRequest, TextMessage
+from linebot.v3.webhooks import (
+    MessageEvent, TextMessageContent, ImageMessageContent,
+    VideoMessageContent, FileMessageContent, JoinEvent
+)
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
 import pytz
 
 from app.database import init_db, save_message, save_group, get_all_groups
 from app.summarizer import generate_summary_for_group
+from app.media_processor import describe_image, extract_pdf
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# LINE config
 LINE_CHANNEL_SECRET = os.environ["LINE_CHANNEL_SECRET"]
 LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
-TARGET_GROUP_ID = os.environ.get("TARGET_GROUP_ID")  # กลุ่มที่ส่งสรุปไป
+TARGET_GROUP_ID = os.environ.get("TARGET_GROUP_ID")
 
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
-
 BANGKOK_TZ = pytz.timezone("Asia/Bangkok")
 
 
@@ -43,46 +45,111 @@ def webhook():
 
 @handler.add(JoinEvent)
 def handle_join(event):
-    """Bot ถูกเพิ่มเข้ากลุ่ม — บันทึก group_id"""
     source = event.source
     if source.type == "group":
         save_group(source.group_id)
         logger.info(f"Joined group: {source.group_id}")
 
 
+# ─── Text ─────────────────────────────────────────────────────────────────────
+
 @handler.add(MessageEvent, message=TextMessageContent)
-def handle_message(event):
-    """รับข้อความจากกลุ่ม — เก็บลง DB"""
+def handle_text(event):
     source = event.source
     if source.type != "group":
         return
-
     group_id = source.group_id
     user_id = getattr(source, "user_id", "unknown")
     text = event.message.text
     ts = datetime.fromtimestamp(event.timestamp / 1000, tz=BANGKOK_TZ)
+    logger.info(f"Text from {group_id}: {text[:30]}")
+    save_message(group_id=group_id, user_id=user_id, text=text, timestamp=ts)
 
-    logger.info(f"Saving message from group: {group_id}, user: {user_id}, text: {text[:30]}")
+
+# ─── Image ────────────────────────────────────────────────────────────────────
+
+@handler.add(MessageEvent, message=ImageMessageContent)
+def handle_image(event):
+    source = event.source
+    if source.type != "group":
+        return
+    group_id = source.group_id
+    user_id = getattr(source, "user_id", "unknown")
+    ts = datetime.fromtimestamp(event.timestamp / 1000, tz=BANGKOK_TZ)
+
+    try:
+        with ApiClient(configuration) as api_client:
+            blob_api = MessagingApiBlob(api_client)
+            image_bytes = blob_api.get_message_content(message_id=event.message.id)
+        text = describe_image(image_bytes)
+        logger.info(f"Image from {group_id}: {text[:50]}")
+    except Exception as e:
+        logger.error(f"Error processing image: {e}")
+        text = "[รูปภาพ]"
+
+    save_message(group_id=group_id, user_id=user_id, text=text, timestamp=ts)
+
+
+# ─── Video ────────────────────────────────────────────────────────────────────
+
+@handler.add(MessageEvent, message=VideoMessageContent)
+def handle_video(event):
+    source = event.source
+    if source.type != "group":
+        return
+    group_id = source.group_id
+    user_id = getattr(source, "user_id", "unknown")
+    ts = datetime.fromtimestamp(event.timestamp / 1000, tz=BANGKOK_TZ)
+    logger.info(f"Video from {group_id}")
+    save_message(group_id=group_id, user_id=user_id, text="[วิดีโอ]", timestamp=ts)
+
+
+# ─── File (PDF) ───────────────────────────────────────────────────────────────
+
+@handler.add(MessageEvent, message=FileMessageContent)
+def handle_file(event):
+    source = event.source
+    if source.type != "group":
+        return
+    group_id = source.group_id
+    user_id = getattr(source, "user_id", "unknown")
+    ts = datetime.fromtimestamp(event.timestamp / 1000, tz=BANGKOK_TZ)
+    file_name = event.message.file_name or "file"
+
+    try:
+        with ApiClient(configuration) as api_client:
+            blob_api = MessagingApiBlob(api_client)
+            file_bytes = blob_api.get_message_content(message_id=event.message.id)
+
+        if file_name.lower().endswith(".pdf"):
+            text = extract_pdf(file_bytes)
+        else:
+            text = f"[ไฟล์: {file_name}]"
+
+        logger.info(f"File from {group_id}: {file_name}")
+    except Exception as e:
+        logger.error(f"Error processing file: {e}")
+        text = f"[ไฟล์: {file_name}]"
+
     save_message(group_id=group_id, user_id=user_id, text=text, timestamp=ts)
 
 
 # ─── Daily Summary Job ────────────────────────────────────────────────────────
 
 def run_daily_summary():
-    """รันทุกวัน 18:00 — สรุปทุกกลุ่มแล้วส่งไปที่ TARGET_GROUP_ID"""
     logger.info("Starting daily summary job...")
 
     if not TARGET_GROUP_ID:
-        logger.error("TARGET_GROUP_ID not set! Cannot send summary.")
+        logger.error("TARGET_GROUP_ID not set!")
         return
 
     groups = get_all_groups()
-    logger.info(f"Found {len(groups)} groups to summarize, sending to: {TARGET_GROUP_ID}")
+    logger.info(f"Found {len(groups)} groups, sending to: {TARGET_GROUP_ID}")
 
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
-
         all_summaries = []
+
         for group_id in groups:
             try:
                 summary = generate_summary_for_group(group_id)
@@ -138,13 +205,10 @@ def debug_db():
         "target_group_id": TARGET_GROUP_ID,
         "groups": [g.group_id for g in groups],
         "recent_messages": [
-            {"group_id": m.group_id, "text": m.text, "time": str(m.timestamp)}
+            {"group_id": m.group_id, "text": m.text[:50], "time": str(m.timestamp)}
             for m in messages
         ],
-        "summary_cycle": {
-            "start": str(cycle_start),
-            "end": str(cycle_end)
-        }
+        "summary_cycle": {"start": str(cycle_start), "end": str(cycle_end)}
     }
 
 
@@ -154,7 +218,6 @@ def register_group():
     if not group_id:
         return {"error": "missing ?id=GROUP_ID"}, 400
     save_group(group_id)
-    logger.info(f"Manually registered group: {group_id}")
     return {"status": "registered", "group_id": group_id}
 
 
