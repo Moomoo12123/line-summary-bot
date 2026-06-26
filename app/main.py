@@ -61,6 +61,7 @@ def handle_message(event):
     text = event.message.text
     ts = datetime.fromtimestamp(event.timestamp / 1000, tz=BANGKOK_TZ)
 
+    logger.info(f"Saving message from group: {group_id}, user: {user_id}, text: {text[:30]}")
     save_message(group_id=group_id, user_id=user_id, text=text, timestamp=ts)
 
 
@@ -114,6 +115,27 @@ def start_scheduler():
 @app.route("/health")
 def health():
     return {"status": "ok", "time": datetime.now(BANGKOK_TZ).isoformat()}
+
+
+@app.route("/debug-db")
+def debug_db():
+    from app.database import SessionLocal, Message, Group, get_summary_cycle
+    db = SessionLocal()
+    groups = db.query(Group).all()
+    messages = db.query(Message).order_by(Message.timestamp.desc()).limit(10).all()
+    cycle_start, cycle_end = get_summary_cycle()
+    db.close()
+    return {
+        "groups": [g.group_id for g in groups],
+        "recent_messages": [
+            {"group_id": m.group_id, "text": m.text, "time": str(m.timestamp)}
+            for m in messages
+        ],
+        "summary_cycle": {
+            "start": str(cycle_start),
+            "end": str(cycle_end)
+        }
+    }
 
 
 @app.route("/register-group")
